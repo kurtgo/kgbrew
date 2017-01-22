@@ -18,15 +18,19 @@
 
 // The value of the Rref resistor. Use 430.0!
 #define RREF 430.0
+#define PUBLISH_MS 60000
 
 
 /************************* WiFI Setup *****************************/
-#define WINC_CS   8
+#define WINC_CS_PIN   8
 #define WINC_IRQ  7
 #define WINC_RST  4
 #define WINC_EN   5     // or, tie EN to VCC
 
 #define SSR_PIN   9
+#define MAX31865_CS_PIN 10
+#define MCP4132_CS_PIN 6
+
 
 const char ssid[] = "kghome-e24";     //  your network SSID (name)
 const char pass[] = "renandstimpy";    // your network password (use for WPA, or use as key for WEP)
@@ -37,8 +41,61 @@ const char pass[] = "renandstimpy";    // your network password (use for WPA, or
 int keyIndex = 0;
 #define POLL_TIME 2000  // poll MQTT every 2 seconds
 
-Adafruit_WINC1500 WiFi(WINC_CS, WINC_IRQ, WINC_RST);
-Adafruit_MAX31865 max31865 = Adafruit_MAX31865(10, 11, 12, 13);
+
+
+class MCP4132 {
+public:
+	int pot_cs;
+	const byte write = 0b00000000;
+	const byte read  = 0b00000100;
+	MCP4132(int cs) { pot_cs = cs; };
+
+	void digitalPotWrite(int value)
+	{
+		digitalWrite(pot_cs, LOW);
+		SPI.transfer(write+((value >> 8) & 0x3));
+		SPI.transfer((byte)value);
+		digitalWrite(pot_cs, HIGH);
+	}
+	void test() {
+		digitalPotWrite(0x00);
+		delay(5000);
+
+		// adjust  wiper in the  Mid point  .
+		digitalPotWrite(0x40);
+		delay(5000);
+
+		// adjust Lowest Resistance .
+		digitalPotWrite(0x80);
+		delay(5000);
+
+		// adjust Lowest Resistance .
+		digitalPotWrite(0xd0);
+		delay(5000);
+
+		// adjust Lowest Resistance .
+		digitalPotWrite(0x100);
+		delay(5000);
+
+		digitalPotWrite(0x140);
+		delay(5000);
+
+		// adjust Lowest Resistance .
+		digitalPotWrite(0x0);
+		delay(5000);
+	}
+};
+
+float CtoF(float celsius)
+{
+	float fahrenheit = (1.8 * celsius) + 32;
+	return fahrenheit;
+}
+
+
+Adafruit_WINC1500 WiFi(WINC_CS_PIN, WINC_IRQ, WINC_RST);
+Adafruit_MAX31865 max31865 = Adafruit_MAX31865(MAX31865_CS_PIN);
+MCP4132 mcp4132 = MCP4132(MCP4132_CS_PIN);
 
 int status = WL_IDLE_STATUS;
 
@@ -70,28 +127,48 @@ Adafruit_MQTT_Subscribe setpower = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "
 /*************************** Sketch Code ************************************/
 
 #define LEDPIN 13
-
-
 void setup() {
+  while (!Serial);
+  Serial.begin(115200);
+
+  Serial.println(F("KG Brewer"));
+
+
+  // set the chip selects for the SPI bus to all off
+  pinMode(MAX31865_CS_PIN, OUTPUT);
+  digitalWrite(MAX31865_CS_PIN, HIGH);
+
+  pinMode(MCP4132_CS_PIN, OUTPUT);
+  digitalWrite(MCP4132_CS_PIN, HIGH);
+
+  pinMode(WINC_CS_PIN, OUTPUT);
+  digitalWrite(WINC_CS_PIN, HIGH);
+
 #ifdef WINC_EN
   pinMode(WINC_EN, OUTPUT);
   digitalWrite(WINC_EN, HIGH);
 #endif
 
   max31865.begin(MAX31865_3WIRE);  // set to 2WIRE or 4WIRE as necessary
+  if (max31865.readFault() != 0) {
+	  Serial.println(F("MAX31865 failed to init"));
+  } else {
+	  Serial.println(F("MAX31865 functioning!!!"));
+  }
+  Serial.print(F("temp="));
+  Serial.println(CtoF(max31865.temperature(100,RREF)));
+  getTemp();
+
 
   Timer1.initialize(166666); // set 30hz period
-  
+
   pinMode(SSR_PIN, OUTPUT);
   digitalWrite(SSR_PIN, LOW);
   Timer1.pwm(SSR_PIN, 0);
 
-  while (!Serial);
-  Serial.begin(115200);
 
-  Serial.println(F("KG Brewer"));
 
-  // Initialise the Client
+  // Initialize the Client
   Serial.print(F("\nInit the WiFi module..."));
   // check for the presence of the breakout
   if (WiFi.status() == WL_NO_SHIELD) {
@@ -100,7 +177,7 @@ void setup() {
     while (true);
   }
   Serial.println(F("ATWINC OK!"));
-  
+
   pinMode(LEDPIN, OUTPUT);
   mqtt.subscribe(&onoffbutton);
   mqtt.subscribe(&setpower);
@@ -117,36 +194,36 @@ uint32_t lastms = 0;
 float getTemp()
 {
   uint16_t rtd = max31865.readRTD();
-  uint16_t tmp = max31865.temperature(100, RREF);
+  float tmp = max31865.temperature(100, RREF);
 
-  Serial.print(F("RTD value: ")); Serial.println(rtd);
+//  Serial.print(F("RTD value: ")); Serial.println(rtd);
   float ratio = rtd;
   ratio /= 32768;
-  Serial.print(F("Ratio = ")); Serial.println(ratio,8);
-  Serial.print(F("Resistance = ")); Serial.println(RREF*ratio,8);
-  Serial.print(F("Temperature = ")); Serial.println(tmp);
+//  Serial.print(F("Ratio = ")); Serial.println(ratio,8);
+//  Serial.print(F("Resistance = ")); Serial.println(RREF*ratio,8);
+//  Serial.print(F("Temperature = ")); Serial.println(tmp);
 
   // Check and print any faults
   uint8_t fault = max31865.readFault();
   if (fault) {
     Serial.print(F("Fault 0x")); Serial.println(fault, HEX);
     if (fault & MAX31865_FAULT_HIGHTHRESH) {
-      Serial.println(F("RTD High Threshold")); 
+      Serial.println(F("RTD High Threshold"));
     }
     if (fault & MAX31865_FAULT_LOWTHRESH) {
-      Serial.println(F("RTD Low Threshold")); 
+      Serial.println(F("RTD Low Threshold"));
     }
     if (fault & MAX31865_FAULT_REFINLOW) {
-      Serial.println(F("REFIN- > 0.85 x Bias")); 
+      Serial.println(F("REFIN- > 0.85 x Bias"));
     }
     if (fault & MAX31865_FAULT_REFINHIGH) {
-      Serial.println(F("REFIN- < 0.85 x Bias - FORCE- open")); 
+      Serial.println(F("REFIN- < 0.85 x Bias - FORCE- open"));
     }
     if (fault & MAX31865_FAULT_RTDINLOW) {
-      Serial.println(F("RTDIN- < 0.85 x Bias - FORCE- open")); 
+      Serial.println(F("RTDIN- < 0.85 x Bias - FORCE- open"));
     }
     if (fault & MAX31865_FAULT_OVUV) {
-      Serial.println(F("Under/Over voltage")); 
+      Serial.println(F("Under/Over voltage"));
     }
     max31865.clearFault();
   }
@@ -157,10 +234,11 @@ void loop() {
   uint32_t on = pwm_on;
   uint32_t newpower = power;
   uint32_t newtemp = target_temp;
-  
+
   // Ensure the connection to the MQTT server is alive (this will make the first
   // connection and automatically reconnect when disconnected).  See the MQTT_connect
   // function definition further below.
+
   MQTT_connect();
 
   // this is our 'wait for incoming subscription packets' busy subloop
@@ -187,11 +265,13 @@ void loop() {
   }
 
   float tmp = getTemp();
+  Serial.print(F("Temp: "));
+  Serial.println(tmp);
 
   if (power > 100) power = 100;
 
   target_temp = newtemp;
-  
+
   if (on != pwm_on || power != newpower) {
       power = newpower;
       if (on) {
@@ -205,23 +285,13 @@ void loop() {
       pwm_on = on;
   }
 
-  // Now we can publish stuff!
-#define FAKESYSTEM
-#ifdef FAKESYSTEM
-  if (pwm_on) {
-    cur_temp += (float)power/100.0;
-    if (cur_temp > target_temp) {
-        cur_temp = target_temp;     
-    }
-  } else {
-    cur_temp -= .1;
-  }
-  #endif
+  cur_temp = tmp;
 
+  // Now we can publish stuff!
   uint32_t x = millis();
 
-  if (x-lastms > 2000) {
-    if (! temp.publish(cur_temp)) {
+  if (x-lastms > PUBLISH_MS) {
+    if (! temp.publish(CtoF(cur_temp))) {
       Serial.println(F("Failed"));
     } else {
       Serial.print(F("."));
@@ -248,7 +318,7 @@ void MQTT_connect() {
       delay(1000);
     }
   }
-  
+
   // Stop if already connected.
   if (mqtt.connected()) {
     return;
