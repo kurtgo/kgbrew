@@ -31,13 +31,7 @@
 #define MAX31865_CS_PIN 10
 #define MCP4132_CS_PIN 6
 
-
-const char ssid[] = "kghome-e24";     //  your network SSID (name)
-const char pass[] = "renandstimpy";    // your network password (use for WPA, or use as key for WEP)
-#define AIO_SERVER      "io.adafruit.com"
-#define AIO_SERVERPORT  1883
-#define AIO_USERNAME    "kurtgodwin"
-#define AIO_KEY         "f9e0538739574301b56f9fca577c717f"
+#include "/kghome.h"
 int keyIndex = 0;
 #define POLL_TIME 2000  // poll MQTT every 2 seconds
 
